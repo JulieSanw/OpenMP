@@ -51,7 +51,6 @@ void read_edge(char* filename,
     dsts[counter] = dst;
     ++counter;
   }
-
   infile.close();
 }
 
@@ -95,7 +94,6 @@ void create_csr(int num_verts, int num_edges,
   copy(in_degree_list, in_degree_list + num_verts, temp_counts);
   for (int i = 0; i < num_edges; ++i)
     in_array[temp_counts[dsts[i]]++] = srcs[i];
-
   delete [] temp_counts;
 }
 
@@ -125,7 +123,6 @@ void output_connectivity_info(graph* g, int* conn)
 }
 
 
-
 double* do_connectivity_info(graph* g, int root)
 {
   int* conn = new int[g->num_verts];
@@ -134,37 +131,44 @@ double* do_connectivity_info(graph* g, int root)
 
   conn[root] = OUT_SET;
 
+    int* seen = new int[g->num_verts];
+  for (int i = 0; i < g->num_verts; ++i)
+    seen[i] = 0;
+  seen[root] = 1;
+  
   int* queue = new int[g->num_verts];
+  //int *queue = (int *)malloc(sizeof(int)*g->num_verts);
   int* queue_next = new int[g->num_verts];
+  //int *queue_next = (int *)malloc(sizeof(int)*g->num_verts);
   int queue_size = 0;
   int next_size = 0;
 
   double timer = omp_get_wtime();
 
   queue[queue_size++] = root;
-
+  int updates = 0;
   while (queue_size > 0)
   { 
+#pragma omp parallel for
     for (int i = 0; i < queue_size; ++i)
     { 
       int u = queue[i];
       int out_degree = out_degree(g, u);      
 
       int* out_edges = out_vertices(g, u);
-      if(u == 0){
-        for (int i =0; i<14;++i)
-  
-
-          printf(" root out %d\n", out_edges[i]);
-      }
+      
       for (int j = 0; j < out_degree; ++j)
       {
         int out = out_edges[j];
         //printf("%d\n", out);
-        if (conn[out] != OUT_SET)
+        if (seen[out] == 0)
         {
           conn[out] = OUT_SET; 
-          queue_next[next_size++] = out;
+          seen[out] = 1;
+          int index = 0;
+      #pragma omp atomic capture
+          index = next_size++;
+          queue_next[index] = out;
         }
       }    
     }
@@ -174,12 +178,17 @@ double* do_connectivity_info(graph* g, int root)
     queue_size = next_size;
     next_size = 0;
   }
+  
+  queue_size = 0;
 
   conn[root] = SCC_SET;
-  queue_size = 0;
   queue[queue_size++] = root;
+  for (int i = 0; i < g->num_verts; ++i)
+    seen[i] = 0;
+  seen[root] = 1;
   while (queue_size > 0)
-  {
+  { 
+#pragma omp parallel for
     for (int i = 0; i < queue_size; ++i)
     { 
       int u = queue[i];
@@ -191,19 +200,19 @@ double* do_connectivity_info(graph* g, int root)
         for (int j = 0; j < in_degree; ++j)
         {
           int in = in_edges[j];
-          //printf("%d\n", out);
-          if ( conn[in] != SCC_SET)
+          if (seen[in] == 0)
           {
             if ( conn[in] == OUT_SET )
-            {
               conn[in] = SCC_SET;
-            } 
-            else
+            else if (conn[in] == NOT_SET)
               conn[in] = IN_SET;
-            queue_next[next_size++] = in;
+            int index = 0;
+        #pragma omp atomic capture  
+            index = next_size++;
+            queue_next[index] = in;
+            seen[in] = 1;
           }
         }
-      
     }
     int* ntmp = queue;
     queue = queue_next;
@@ -211,7 +220,7 @@ double* do_connectivity_info(graph* g, int root)
     queue_size = next_size;
     next_size = 0;
   }
-
+  
   
   timer = omp_get_wtime() - timer;
 
@@ -252,7 +261,7 @@ int main(int argc, char** argv)
   delete [] srcs;
   delete [] dsts;
 
-  int root = 0;
+  int root = 749;
   do_connectivity_info(&g, root);
 
   delete [] out_array;
