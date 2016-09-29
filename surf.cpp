@@ -1,3 +1,55 @@
+/*********************************************************
+//* Class:  CS 6971 - Parallel Graph Analysis, Fall 2016
+//* Instructor: Prof. George M. Slota 
+//*
+//* Description: Assignment 2: Web Graph Analysis
+//*              Part 2: Implementing a Random Surfer 
+//* Name:   Wenyin San
+//* RIN#:   661476220
+//* Email:  sanw@rpi.edu
+//*
+//* Template: http://www.cs.rpi.edu/~slotag/classes/FA16/assignments/hw02-sruf.cpp            
+//* Due Date: Thur 29 Sept. 2016, 16:00
+//*********************************************************
+/*
+Output:
+time: 0.013701
+Sum: 1.000113 -- Max: 0.007490 -- Vert: 2264
+time: 0.003038
+Sum: 1.000000 -- Max: 0.006987 -- Vert: 2264
+Total error:  0.274806, Avg error:  0.000028
+Sum: 1.000000 -- Max: 0.007107 -- Vert: 8226
+time: 0.001435
+Total error:  0.385698, Avg error:  0.000039
+Short Answer Questions
+1. 
+-- To get a total_error < 0.01 for random surfer, it needs about 10,000,000 iterations, and the number of 
+   clicks is about 92,196,352. It is much higher than 50 iterations needed by the standard algorithm.
+--  Output for google.graph
+    CC info -- Num CCs: 2746, Num Trivial: 0, Max CC: 855802
+--  Output for random.graph
+    CC info -- Num CCs: 80010, Num Trivial: 10, Max CC: 10
+--  Running Time Table:(Algos run separately)
+    Time:              google.graph           random.graph
+    BFS Serial:        0.114778               0.049212
+    BFS OpenMP:        0.117435               0.059967
+    BFS MPI:           8.502110               243.983274
+    Color Serial:      0.391075               0.168018
+    Color OpenMP:      0.116923               0.039672
+    Color MPI:         0.524890               0.172590
+--  Serial BFS runs fatest for BFS, Color propagation using OpenMP runs fastest for color propagation.    
+2. 
+--  Yes. 
+    Add printf("%d\n", ccLabel[643]); at the end of one algorithm. And the output is 0.
+    Therefore, vertice 643 is labeled with 0, which means that 0 and 643 are in the same component.
+3. 
+--  To turn OpenMP color propagation implementation into a pushing algorithm, push the minimal vertex id to 
+    neighbors instead of find minimum of label among the component.
+    Initialize a queue Q, and add all verts to Q. 
+    For all v in Q, visit v, remove v from Q. Push the label of v to all of its neighbors.
+--  Race conditions might arise from both v and u in Q pushing the label to one vertex.
+*/
+
 #include <mpi.h>
 #include <omp.h>
 #include <cstdlib>
@@ -203,7 +255,7 @@ double* get_pageranks_walk(graph* g, int num_iter)
   double timer = omp_get_wtime();
 
   currPage = rand() % g->num_verts;
-  int ct = 1;
+  int ct = 0;
 
   for (int iter = 0; iter < num_iter; ++iter)
   { 
@@ -236,10 +288,10 @@ double* get_pageranks_walk(graph* g, int num_iter)
   {
     pageranks[i] = 1.0*visit_counts[i]/ct;
   }
+  timer = omp_get_wtime() - timer;
 
   if (rank == 0) 
   {
-    timer = omp_get_wtime() - timer;
     printf("time: %1.6lf\n", timer);
     do_pagerank_verification(g, pageranks);
   }
@@ -273,7 +325,7 @@ double* get_pageranks_walk_mpi(graph* g, int num_iter)
   double timer = omp_get_wtime();
 
   currPage = rand() % g->num_verts;
-  int ct = 1;
+  int ct = 0;
   for (int iter = start_iter; iter < end_iter; ++iter)
   { 
     currPage = rand() % g->num_verts;
@@ -305,16 +357,20 @@ double* get_pageranks_walk_mpi(graph* g, int num_iter)
   MPI_Allreduce(MPI_IN_PLACE, visit_counts, g->num_verts, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(MPI_IN_PLACE, &ct, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
+  MPI_Barrier(MPI_COMM_WORLD);
+
+
   for (int i = 0; i < g->num_verts; ++i)
   {
     pageranks[i] = 1.0*visit_counts[i]/ct;
   }
-  
+  timer = omp_get_wtime() - timer;
   if (rank == 0) 
   {
     do_pagerank_verification(g, pageranks);
-    timer = omp_get_wtime() - timer;
     printf("time: %1.6lf\n", timer);
+    printf("counter: %d\n", ct);
+
   }
   delete [] visit_counts;
 
