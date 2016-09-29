@@ -1,5 +1,4 @@
-
-//#include <mpi.h>
+#include <mpi.h>
 #include <omp.h>
 #include <cstdlib>
 #include <iostream>
@@ -141,7 +140,9 @@ double* get_pageranks_calc(graph* g, int num_iter)
   double* pageranks_next = new double[g->num_verts];
   double sum_sinks = 0.0;
   double sum_sinks_next = 0.0;
-  
+
+  double timer = omp_get_wtime();
+
   for (int vert = 0; vert < g->num_verts; ++vert) {
     pageranks[vert] = 1 / (double)g->num_verts;
     if (out_degree(g, vert) == 0)
@@ -174,8 +175,12 @@ double* get_pageranks_calc(graph* g, int num_iter)
     sum_sinks_next = 0.0;
   }
 
-  //if (rank == 0) 
-  do_pagerank_verification(g, pageranks);
+  if (rank == 0) 
+  {
+    timer = omp_get_wtime() - timer;
+    printf("time: %1.6lf\n", timer);
+    do_pagerank_verification(g, pageranks);
+  }
   delete [] pageranks_next;
 
   return pageranks;
@@ -194,46 +199,50 @@ double* get_pageranks_walk(graph* g, int num_iter)
   int currPage = 0; 
   int r = 0;
   int l = 0;
-  l = (int)OUTLINK_PROB*100;
+  l = OUTLINK_PROB*100;
+  double timer = omp_get_wtime();
+
   currPage = rand() % g->num_verts;
+  int ct = 1;
+
   for (int iter = 0; iter < num_iter; ++iter)
   { 
+    currPage = rand() % g->num_verts;
+    int out_degree = out_degree(g, currPage);
+    ++ct;
     ++visit_counts[currPage];
-    //for (int vert = 0; vert < g->num_verts; ++vert) 
-    //{
-    //currPage = vert;
-    r = rand()%100;
-    if (r < 85) 
+    while ( out_degree > 0 )
     { 
-      //go to random connected page
-      int out_degree = out_degree(g, currPage);
-      //printf("%d\n",out_degree );
-      int* out_vertices = out_vertices(g, currPage);
-      if(out_degree>0)
-      {
+      r = rand()%100;
+      if (r < l) 
+      { 
+        int* out_vertices = out_vertices(g, currPage);
         int randConnection = rand() % out_degree;
         int nextPage = out_vertices[randConnection];
-      }
-      else {
-        //go to random page
-        int nextPage = rand() % g->num_verts;
         currPage = nextPage;
       }
-    }
-    else {
+      else {
       //go to random page
       int nextPage = rand() % g->num_verts;
       currPage = nextPage;
+      }
+      out_degree = out_degree(g, currPage);
+      ++ct;
+      ++visit_counts[currPage];
     }
-    //}
+   
   }
   for (int i = 0; i < g->num_verts; ++i)
   {
-    pageranks[i] = 1.0*visit_counts[i]/(num_iter);
+    pageranks[i] = 1.0*visit_counts[i]/ct;
   }
 
-  //if (rank == 0) 
-  do_pagerank_verification(g, pageranks);
+  if (rank == 0) 
+  {
+    timer = omp_get_wtime() - timer;
+    printf("time: %1.6lf\n", timer);
+    do_pagerank_verification(g, pageranks);
+  }
   delete [] visit_counts;
 
   return pageranks;
@@ -241,17 +250,72 @@ double* get_pageranks_walk(graph* g, int num_iter)
 
 
 double* get_pageranks_walk_mpi(graph* g, int num_iter)
-{
+{ 
+
+  int start_iter = rank * (num_iter/ size + 1);
+  int end_iter = (rank + 1) * (num_iter / size + 1);
+  if (end_iter > num_iter)
+    end_iter = num_iter;
+
   double* pageranks = new double[g->num_verts];
   for (int i = 0; i < g->num_verts; ++i)
     pageranks[i] = 0.0;
   int* visit_counts = new int[g->num_verts];
   for (int i = 0; i < g->num_verts; ++i)
     visit_counts[i] = 0;
+
+  srand((int) time (0)); 
+  //double timer = omp_get_wtime();
+  int currPage = 0; 
+  int r = 0;
+  int l = 0;
+  l = OUTLINK_PROB*100;
+  double timer = omp_get_wtime();
+
+  currPage = rand() % g->num_verts;
+  int ct = 1;
+  for (int iter = start_iter; iter < end_iter; ++iter)
+  { 
+    currPage = rand() % g->num_verts;
+    int out_degree = out_degree(g, currPage);
+    ++ct;
+    ++visit_counts[currPage];
+    while ( out_degree > 0 )
+    { 
+      r = rand()%100;
+      if (r < l) 
+      { 
+        int* out_vertices = out_vertices(g, currPage);
+        int randConnection = rand() % out_degree;
+        int nextPage = out_vertices[randConnection];
+        currPage = nextPage;
+      }
+      else {
+      //go to random page
+      int nextPage = rand() % g->num_verts;
+      currPage = nextPage;
+      }
+      out_degree = out_degree(g, currPage);
+      ++ct;
+      ++visit_counts[currPage];
+    }
+   
+  }
+
+  MPI_Allreduce(MPI_IN_PLACE, visit_counts, g->num_verts, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, &ct, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+  for (int i = 0; i < g->num_verts; ++i)
+  {
+    pageranks[i] = 1.0*visit_counts[i]/ct;
+  }
   
-  
-  //if (rank == 0) 
-  do_pagerank_verification(g, pageranks);
+  if (rank == 0) 
+  {
+    do_pagerank_verification(g, pageranks);
+    timer = omp_get_wtime() - timer;
+    printf("time: %1.6lf\n", timer);
+  }
   delete [] visit_counts;
 
   return pageranks;
@@ -260,17 +324,17 @@ double* get_pageranks_walk_mpi(graph* g, int num_iter)
 
 int main(int argc, char** argv)
 {
-  //MPI_Init(&argc, &argv);
-  //MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  //MPI_Comm_size(MPI_COMM_WORLD, &size);
-  //srand(time(0) + rank);
+  MPI_Init(&argc, &argv);
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+  srand(time(0) + rank);
 
   if (argc < 3) 
   {
-    //if (rank == 0) 
+    if (rank == 0) 
     printf("Usage: %s [graphfile] [num clicks]\n", argv[0]);
-    //MPI_Barrier(MPI_COMM_WORLD);
-    //MPI_Abort(MPI_COMM_WORLD, 1);
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Abort(MPI_COMM_WORLD, 1);
   }
 
   int* srcs;
@@ -292,24 +356,24 @@ int main(int argc, char** argv)
 
   double* pageranks1 = get_pageranks_calc(&g, 50);
   double* pageranks2 = get_pageranks_walk(&g, atoi(argv[2]));
-  //if (rank == 0) 
+  if (rank == 0) 
     calc_error(g.num_verts, pageranks1, pageranks2);
 
-  //double* pageranks3 = get_pageranks_walk_mpi(&g, atoi(argv[2]));
-  //if (rank == 0) 
-  // calc_error(g.num_verts, pageranks1, pageranks3);
+  double* pageranks3 = get_pageranks_walk_mpi(&g, atoi(argv[2]));
+  if (rank == 0) 
+    calc_error(g.num_verts, pageranks1, pageranks3);
 
   delete [] pageranks1;
   delete [] pageranks2;
-  //delete [] pageranks3;
+  delete [] pageranks3;
 
   delete [] out_array;
   delete [] in_array;
   delete [] out_degree_list;
   delete [] in_degree_list;
 
-  //MPI_Barrier(MPI_COMM_WORLD);
-  //MPI_Finalize();
+  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Finalize();
 
   return 0;
 }
